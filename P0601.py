@@ -13,6 +13,14 @@ Creacion de dataset P0601 "Denuncias recibidas en materia ambiental"
 # Librerias Utilizadas
 import pandas as pd
 
+# Librerias locales utilizadas
+module_path = r'D:\PCCS\01_Analysis\01_DataAnalysis\00_Parametros\scripts'
+if module_path not in sys.path:
+    sys.path.append(module_path)
+
+from SUN.asignar_sun import asignar_sun                     # Disponible en https://github.com/Caranarq/SUN
+from SUN_integridad.SUN_integridad import SUN_integridad    # Disponible en https://github.com/Caranarq/SUN_integridad
+
 # Directorios locales
 DirFuente = r'D:\PCCS\01_Analysis\01_DataAnalysis\00_Parametros\scripts\BS01'
 DirDestino = r'D:\PCCS\01_Analysis\01_DataAnalysis\06_BienesAmbientalesYServiciosPublicos\Scripts'
@@ -39,20 +47,39 @@ descripcion = {
 
 # Dataset limpio
 anios = list(range(1993, 2014))
-registros = []
 
 # renombrar columnas al año que corresponden
+registros = []
 for i in anios:
-    registros.append('DENUNNCIAS_AMB_{}'.format(i))
+    registros.append('DENUNCIAS_AMB_{}'.format(i))
 
 denuncias_ma = dataset[Denuncias]
 denuncias_ma.columns = registros
 
-# Total de denuncias por municipios.
+# Total de denuncias por municipios y registro de informacion faltante.
+faltantes = denuncias_ma.isnull().sum(axis = 1)
 denuncias_ma['DENUNCIAS_AMB'] = denuncias_ma.sum(axis=1)
+denuncias_ma['faltantes'] = faltantes
+
+# Consolidar datos por ciudad
+denuncias_ma['CVE_MUN'] = denuncias_ma.index
+denuncias_std = asignar_sun(denuncias_ma, vars = ['CVE_MUN', 'NOM_MUN', 'CVE_SUN', 'NOM_SUN', 'TIPO_SUN', 'NOM_ENT'])
+
+# Revision de integridad
+denuncias_int = SUN_integridad(denuncias_std)
+
+# Lista de Variables
+variables = sorted(list(set(list(denuncias_std) +
+                     list(denuncias_int['INTEGRIDAD']) +
+                     list(denuncias_int['EXISTENCIA']))))
+
+
+
+denuncias_ma.iloc[34]
 
 # Exportar a Excel
 writer = pandas.ExcelWriter(DirDestino + r'\P0601.xlsx')
 dataset_b.to_excel(writer, sheet_name = 'DATOS')
 metadatos.to_excel(writer, sheet_name = 'Metadatos')
 writer.close()
+
