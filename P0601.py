@@ -12,74 +12,125 @@ Creacion de dataset P0601 "Denuncias recibidas en materia ambiental"
 
 # Librerias Utilizadas
 import pandas as pd
+import numpy as np
 
 # Librerias locales utilizadas
 module_path = r'D:\PCCS\01_Analysis\01_DataAnalysis\00_Parametros\scripts'
 if module_path not in sys.path:
     sys.path.append(module_path)
 
-from SUN.asignar_sun import asignar_sun                     # Disponible en https://github.com/Caranarq/SUN
-from SUN_integridad.SUN_integridad import SUN_integridad    # Disponible en https://github.com/Caranarq/SUN_integridad
+from SUN.asignar_sun import asignar_sun                     # Disponible en https://github.com/INECC-PCCS/SUN
+from SUN_integridad.SUN_integridad import SUN_integridad    # Disponible en https://github.com/INECC-PCCS/SUN_integridad
+from PCCS_variables.PCCS_variables import variables         # Disponible en https://github.com/INECC-PCCS/PCCS_variables
+from ParametroEstandar.ParametroEstandar import ParametroEstandar # Disponible en https://github.com/INECC-PCCS/PCCS_variables
 
-# Directorios locales
+# Descripciones del Parametro
 DirFuente = r'D:\PCCS\01_Analysis\01_DataAnalysis\00_Parametros\scripts\BS01'
 DirDestino = r'D:\PCCS\01_Analysis\01_DataAnalysis\06_BienesAmbientalesYServiciosPublicos\Scripts'
+ClaveParametro = 'P0601'
+NombreParametro = 'Denuncias Recibidas en Materia Ambiental'
 
 # Dataset Inicial
 dataset = pd.read_excel(DirFuente + r'\BS01.xlsx', sheetname="DATOS", dtype={'CVE_MUN':str})
 dataset.set_index('CVE_MUN', inplace = True)
 
-# Columnas de Denuncias
+# Seleccionar Columnas de Denuncias
 Denuncias = [x for x in list(dataset) if 'Denuncias recibidas en materia amb' in x]
 
-# Metadatos
-descripcion = {
-    'Nombre del Dataset'   : 'Denuncias Recibidas en Materia Ambiental',
-    'Descripcion del dataset' : 'Numero de denuncias recibidas en materia ambiental, por municipio, de 1993 a 2014',
-    'Fuente'    : 'SIMBAD - Sistema Estatal y municipal de Base de Datos (INEGI)',
-    'URL_Fuente': 'http://sc.inegi.org.mx/cobdem/',
-    'Obtencion de dataset' : 'Mineria de datos disponible en https://github.com/INECC-PCCS/BS01' ,
-    'Desagregacion' : 'Municipal',
-    'Disponibilidad temporal' : '1994 a 2013',
-    'Repositorio de mineria' : '',
-    'Notas' : 'Para las columnas con nombres repetidos, la primer aparicion corresponde a 1994'
-}
-
-# Dataset limpio
-anios = list(range(1993, 2014))
-
 # renombrar columnas al año que corresponden
+anios = list(range(1994, 2015))
 registros = []
+
 for i in anios:
     registros.append('DENUNCIAS_AMB_{}'.format(i))
 
 denuncias_ma = dataset[Denuncias]
 denuncias_ma.columns = registros
 
-# Total de denuncias por municipios y registro de informacion faltante.
+# Total de denuncias por municipios y Variable de Integridad.
+
 faltantes = denuncias_ma.isnull().sum(axis = 1)
 denuncias_ma['DENUNCIAS_AMB'] = denuncias_ma.sum(axis=1)
-denuncias_ma['faltantes'] = faltantes
+
+denuncias_ma['NUM_ANIOS_FALTANTES'] = faltantes
+denuncias_ma['VAR_INTEGRIDAD'] = faltantes.apply(lambda x: (21-x)/21)
+var_denuncias = list(denuncias_ma)
 
 # Consolidar datos por ciudad
 denuncias_ma['CVE_MUN'] = denuncias_ma.index
-denuncias_std = asignar_sun(denuncias_ma, vars = ['CVE_MUN', 'NOM_MUN', 'CVE_SUN', 'NOM_SUN', 'TIPO_SUN', 'NOM_ENT'])
+variables_SUN = ['CVE_MUN', 'NOM_MUN', 'CVE_SUN', 'NOM_SUN', 'TIPO_SUN', 'NOM_ENT']
+
+DatosLimpios = asignar_sun(denuncias_ma, vars = variables_SUN)
+OrdenColumnas = (variables_SUN + var_denuncias)[:30]
+DatosLimpios = DatosLimpios[OrdenColumnas]    # Reordenar las columnas
 
 # Revision de integridad
-denuncias_int = SUN_integridad(denuncias_std)
+integridad_parametro = SUN_integridad(DatosLimpios)
+info_completa = sum(integridad_parametro['INTEGRIDAD']['INTEGRIDAD'] == 1) # Para generar grafico de integridad
+info_sin_info = sum(integridad_parametro['INTEGRIDAD']['INTEGRIDAD'] == 0) # Para generar grafico de integridad
+info_incomple = 135 - info_completa - info_sin_info                 # Para generar grafico de integridad
+
+# Construccion del Parametro
+param_dataset = DatosLimpios.set_index('CVE_SUN')
+param_dataset['CVE_SUN'] = param_dataset.index
+param = param_dataset.groupby(by='CVE_SUN').agg('sum')['DENUNCIAS_AMB']     # Total de denuncias
+intparam = param_dataset.groupby(by='CVE_SUN').agg('mean')['VAR_INTEGRIDAD']     # Total de denuncias
+std_nomsun = param_dataset['CVE_SUN'].map(str)+' - '+param_dataset['NOM_SUN']   # Nombres estandar CVE_SUN + NOM_SUN
+std_nomsun.drop_duplicates(keep='first', inplace = True)
+Parametro = pd.DataFrame()
+Parametro['CIUDAD'] = std_nomsun
+Parametro['DENUNCIAS_AMB'] = param
+Parametro['INTEGRIDAD'] = intparam
+Parametro = Parametro.sort_index()
 
 # Lista de Variables
-variables = sorted(list(set(list(denuncias_std) +
-                     list(denuncias_int['INTEGRIDAD']) +
-                     list(denuncias_int['EXISTENCIA']))))
+variables_locales = sorted(list(set(list(DatosLimpios) +
+                                    list(integridad_parametro['INTEGRIDAD']) +
+                                    list(integridad_parametro['EXISTENCIA']) +
+                                    list(Parametro))))
 
+metavariables = variables(variables_locales)
 
+# Metadatos
+d_hojas = {
+    'HOJAS INCLUIDAS EN EL LIBRO' : np.nan,
+    'METADATOS' : 'Descripciones y notas relativas al Dataset',
+    'PARAMETRO' : 'Dataset resultado de la minería, agregado por clave del Sistema Urbano Nacional, para utilizarse en la construcción de Indicadores',
+    'DATOS' : 'Numero de denuncias recibidas en materia ambiental, por municipio, de 1994 a 2014',
+    'INTEGRIDAD' : 'Revision de integridad de la información POR CLAVE DEL SUN. Promedio de VAR_INTEGRIDAD de los municipios que componen una ciudad. Si no se tiene información para el municipio, VAR_INTEGRIDAD es igual a cero',
+    'EXISTENCIA' : 'Revision de integridad de la información POR MUNICIPIO.'
+}
 
-denuncias_ma.iloc[34]
+d_mineria = {
+    '  ': np.nan,
+    'DESCRIPCION DEL PROCESO DE MINERIA:' : np.nan,
+    'Nombre del Dataset' : NombreParametro,
+    'Descripcion del dataset' : 'Numero de denuncias recibidas en materia ambiental, por municipio, de 1994 a 2014',
+    'Fuente'    : 'SIMBAD - Sistema Estatal y municipal de Base de Datos (INEGI)',
+    'URL_Fuente': 'http://sc.inegi.org.mx/cobdem/',
+    'Dataset base' : '"BS01.xlsx", disponible en https://github.com/INECC-PCCS/BS01' ,
+    'Repositorio de mineria' : 'https://github.com/INECC-PCCS/P0601',
+    'Notas' : 'Sin Notas',
+    'VAR_INTEGRIDAD' : 'La variable de integridad para esta Dataset es el porcentaje de años que cuentan con informacion, por municipio',
+    ' ' : np.nan,
+    'DESCRIPCION DE VARIABLES' : np.nan
+}
 
-# Exportar a Excel
-writer = pandas.ExcelWriter(DirDestino + r'\P0601.xlsx')
-dataset_b.to_excel(writer, sheet_name = 'DATOS')
-metadatos.to_excel(writer, sheet_name = 'Metadatos')
-writer.close()
+descripcion_hojas = pd.DataFrame.from_dict(d_hojas, orient='index').rename(columns={0:'DESCRIPCION'})
+descripcion_mineria = pd.DataFrame.from_dict(d_mineria, orient='index').rename(columns={0:'DESCRIPCION'})
+
+MetaParametro = descripcion_hojas.append(descripcion_mineria).append(metavariables)
+
+# Diccionario de Descripciones
+DescParametro = {
+    'ClaveParametro' : ClaveParametro,
+    'NombreParametro' : NombreParametro,
+    'info_completa' : info_completa,
+    'info_sin_info' : info_sin_info,
+    'info_incomple' : info_incomple,
+    'RutaSalida' : DirDestino,
+}
+
+# Crear archivo de Excel
+ParametroEstandar(DescParametro, MetaParametro, Parametro, DatosLimpios, integridad_parametro)
 
